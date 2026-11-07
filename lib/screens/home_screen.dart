@@ -1,13 +1,15 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../models/note.dart';
 import '../services/note_storage.dart';
 import '../services/security_service.dart';
+import '../widgets/voice_recorder_dialog.dart';
 import 'lock_screen.dart';
 import 'note_edit_screen.dart';
-import '../widgets/voice_recorder_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isGridView = true;
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
@@ -39,7 +42,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadNotes() async {
     setState(() => _isLoading = true);
     final notes = await NoteStorage.loadNotes();
-    // En yeni not en üstte olacak şekilde sırala
     notes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     setState(() {
       _allNotes = notes;
@@ -55,7 +57,9 @@ class _HomeScreenState extends State<HomeScreen> {
       final q = _searchQuery.toLowerCase();
       _filteredNotes = _allNotes.where((note) {
         return note.title.toLowerCase().contains(q) ||
-            note.content.toLowerCase().contains(q);
+            note.content.toLowerCase().contains(q) ||
+            note.documents.any((d) => d.name.toLowerCase().contains(q)) ||
+            note.audios.any((a) => a.name.toLowerCase().contains(q));
       }).toList();
     }
   }
@@ -75,6 +79,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // --- HIZLI EYLEMLER (QUICK CAPTURE DOCK) ---
+
+  // 1. Hızlı Sesli Not
   Future<void> _quickVoiceNote() async {
     final result = await showDialog<VoiceRecordingResult>(
       context: context,
@@ -90,9 +97,15 @@ class _HomeScreenState extends State<HomeScreen> {
         content: '',
         createdAt: now,
         updatedAt: now,
-        audioBase64: result.audioBase64,
-        audioDurationSeconds: result.durationSeconds,
-        colorValue: 0xFFE1BEE7,
+        audios: [
+          AudioItem(
+            id: 'audio_${now.millisecondsSinceEpoch}',
+            name: 'Ses Kaydı 1',
+            base64Data: result.audioBase64,
+            durationSeconds: result.durationSeconds,
+          ),
+        ],
+        colorValue: 0xFFE1BEE7, // Leylak
       );
 
       setState(() {
@@ -103,11 +116,140 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Hızlı sesli not kaydedildi!')),
+          const SnackBar(content: Text('Hızlı sesli not oluşturuldu!')),
         );
       }
     }
   }
+
+  // 2. Hızlı Fotoğraf Notu
+  Future<void> _quickPhotoNote() async {
+    try {
+      final source = await showModalBottomSheet<ImageSource>(
+        context: context,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16.0),
+            child: Wrap(
+              children: [
+                const ListTile(
+                  title: Text('Hızlı Fotoğraf Çek / Seç', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.camera_alt, color: Colors.deepOrangeAccent),
+                  title: const Text('Kamerayla Yeni Çek'),
+                  onTap: () => Navigator.pop(ctx, ImageSource.camera),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_library, color: Colors.blueAccent),
+                  title: const Text('Galeriden Seç'),
+                  onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      if (source == null) return;
+
+      final XFile? file = await _picker.pickImage(
+        source: source,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 85,
+      );
+
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        final now = DateTime.now();
+        final dateStr = DateFormat('d MMMM, HH:mm', 'tr_TR').format(now);
+
+        final newNote = Note(
+          id: now.millisecondsSinceEpoch.toString(),
+          title: 'Fotoğraf Notu - $dateStr',
+          content: '',
+          createdAt: now,
+          updatedAt: now,
+          imagesBase64: [base64Encode(bytes)],
+          colorValue: 0xFFFFF9C4, // Yumuşak Sarı
+        );
+
+        setState(() {
+          _allNotes.insert(0, newNote);
+          _applyFilter();
+        });
+        await NoteStorage.saveNotes(_allNotes);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Fotoğraflı hızlı not oluşturuldu!')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Fotoğraf eklenirken hata: $e')),
+        );
+      }
+    }
+  }
+
+  // 3. Hızlı Belge Notu
+  Future<void> _quickDocumentNote() async {
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv', 'pptx'],
+      );
+
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        final size = (await file.length()) ?? bytes.length;
+        final now = DateTime.now();
+        final ext = file.extension ?? (file.name.contains('.') ? file.name.split('.').last : 'file');
+        final newNote = Note(
+          id: now.millisecondsSinceEpoch.toString(),
+          title: file.name,
+          content: '',
+          createdAt: now,
+          updatedAt: now,
+          documents: [
+            DocumentItem(
+              id: 'doc_${now.millisecondsSinceEpoch}',
+              name: file.name,
+              extension: ext.toLowerCase(),
+              sizeBytes: size,
+              base64Data: base64Encode(bytes),
+            ),
+          ],
+          colorValue: 0xFFE0F2F1, // Turkuaz / Nane
+        );
+
+          setState(() {
+            _allNotes.insert(0, newNote);
+            _applyFilter();
+          });
+          await NoteStorage.saveNotes(_allNotes);
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Belge notu oluşturuldu!')),
+            );
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Belge eklenirken hata: $e')),
+          );
+        }
+      }
+    }
 
   Future<void> _editNote(Note note) async {
     final updatedNote = await Navigator.push<Note>(
@@ -120,12 +262,14 @@ class _HomeScreenState extends State<HomeScreen> {
       if (index != -1) {
         setState(() {
           _allNotes[index] = updatedNote;
-          // Güncellenen notu başa al
           _allNotes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
           _applyFilter();
         });
         await NoteStorage.saveNotes(_allNotes);
       }
+    } else {
+      // Başka nota taşıma/kopyalama yapılmış olabileceğinden notları yeniden yükle
+      _loadNotes();
     }
   }
 
@@ -346,7 +490,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       });
                     },
                     decoration: InputDecoration(
-                      hintText: 'Notlarda ara...',
+                      hintText: 'Notlarda, belgelerde veya seslerde ara...',
                       prefixIcon: const Icon(Icons.search),
                       suffixIcon: _searchQuery.isNotEmpty
                           ? IconButton(
@@ -383,27 +527,96 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ],
             ),
-      floatingActionButton: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton(
-            heroTag: 'quick_voice_btn',
-            onPressed: _quickVoiceNote,
-            backgroundColor: Colors.deepPurple.shade100,
-            foregroundColor: Colors.deepPurple,
-            tooltip: 'Hızlı Sesli Not Al',
-            child: const Icon(Icons.mic),
+      // Alt Hızlı Eylem Paneli (Quick Capture Dock)
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 10,
+              offset: const Offset(0, -3),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildQuickCaptureButton(
+                icon: Icons.mic_rounded,
+                label: 'Hızlı Ses',
+                color: Colors.purple.shade700,
+                onTap: _quickVoiceNote,
+              ),
+              _buildQuickCaptureButton(
+                icon: Icons.camera_alt_rounded,
+                label: 'Hızlı Foto',
+                color: Colors.orange.shade800,
+                onTap: _quickPhotoNote,
+              ),
+              _buildQuickCaptureButton(
+                icon: Icons.attach_file_rounded,
+                label: 'Hızlı Belge',
+                color: Colors.blue.shade700,
+                onTap: _quickDocumentNote,
+              ),
+              InkWell(
+                onTap: _addNewNote,
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.deepPurple,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.deepPurple.withValues(alpha: 0.3),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add, color: Colors.white, size: 20),
+                      SizedBox(width: 4),
+                      Text('Yeni Not', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          FloatingActionButton.extended(
-            heroTag: 'add_note_btn',
-            onPressed: _addNewNote,
-            icon: const Icon(Icons.add),
-            label: const Text('Not Ekle'),
-            backgroundColor: Colors.deepPurple,
-            foregroundColor: Colors.white,
-          ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickCaptureButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -435,7 +648,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Text(
                 isSearching
                     ? 'Farklı bir arama terimi deneyebilirsiniz.'
-                    : 'Aşağıdaki "Not Ekle" butonuna dokunarak fotoğraflı ilk notunuzu oluşturun!',
+                    : 'Aşağıdaki panelden anında ses, fotoğraf veya belge ekleyerek başlayın!',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
               ),
@@ -449,7 +662,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildGridView() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Geniş ekranlarda (örn. web tarayıcısı tam ekran) kolon sayısını otomatik ayarla
         final crossAxisCount = constraints.maxWidth > 900
             ? 4
             : constraints.maxWidth > 600
@@ -462,7 +674,7 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            childAspectRatio: 0.78,
+            childAspectRatio: 0.76,
           ),
           itemCount: _filteredNotes.length,
           itemBuilder: (context, index) {
@@ -568,19 +780,50 @@ class _HomeScreenState extends State<HomeScreen> {
                               color: textColor,
                             ),
                           ),
-                          if (note.hasAudio) ...[
-                            const SizedBox(height: 3),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
+                          // Medya Rozetleri (Ses ve Belge Varsa)
+                          if (note.hasAudio || note.hasDocuments) ...[
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 6,
                               children: [
-                                Icon(Icons.mic, size: 13, color: textColor),
-                                const SizedBox(width: 3),
-                                Text(
-                                  note.audioDurationSeconds != null
-                                      ? '${(note.audioDurationSeconds! ~/ 60).toString().padLeft(2, '0')}:${(note.audioDurationSeconds! % 60).toString().padLeft(2, '0')}'
-                                      : 'Ses Kaydı',
-                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: textColor),
-                                ),
+                                if (note.hasAudio)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.purple.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.graphic_eq_rounded, size: 12, color: Colors.purple.shade700),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          '${note.audios.length} Ses',
+                                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.purple.shade700),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if (note.hasDocuments)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.attach_file_rounded, size: 12, color: Colors.blue.shade700),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          '${note.documents.length} Belge',
+                                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                               ],
                             ),
                           ],
@@ -658,7 +901,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
 
-                  // Metin İçeriği
+                  // Metin & Rozet İçeriği
                   Expanded(
                     flex: imageBytes != null ? 3 : 5,
                     child: Padding(
@@ -676,19 +919,50 @@ class _HomeScreenState extends State<HomeScreen> {
                               color: textColor,
                             ),
                           ),
-                          if (note.hasAudio) ...[
+                          // Medya Rozetleri
+                          if (note.hasAudio || note.hasDocuments) ...[
                             const SizedBox(height: 3),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
+                            Wrap(
+                              spacing: 6,
                               children: [
-                                Icon(Icons.mic, size: 13, color: textColor),
-                                const SizedBox(width: 3),
-                                Text(
-                                  note.audioDurationSeconds != null
-                                      ? '${(note.audioDurationSeconds! ~/ 60).toString().padLeft(2, '0')}:${(note.audioDurationSeconds! % 60).toString().padLeft(2, '0')}'
-                                      : 'Ses Kaydı',
-                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: textColor),
-                                ),
+                                if (note.hasAudio)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: Colors.purple.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.graphic_eq_rounded, size: 10, color: Colors.purple.shade700),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          '${note.audios.length} Ses',
+                                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.purple.shade700),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if (note.hasDocuments)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.attach_file_rounded, size: 10, color: Colors.blue.shade700),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          '${note.documents.length} Belge',
+                                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                               ],
                             ),
                           ],
@@ -696,7 +970,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           Expanded(
                             child: Text(
                               note.content,
-                              maxLines: imageBytes != null ? 2 : 5,
+                              maxLines: imageBytes != null ? 2 : 4,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontSize: 13, color: secondaryTextColor),
                             ),

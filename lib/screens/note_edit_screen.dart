@@ -1,10 +1,14 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../models/note.dart';
-import '../widgets/voice_player_widget.dart';
+import '../services/note_storage.dart';
+import '../widgets/audio_list_widget.dart';
+import '../widgets/document_list_widget.dart';
+import '../widgets/media_transfer_dialog.dart';
 import '../widgets/voice_recorder_dialog.dart';
 
 class NoteEditScreen extends StatefulWidget {
@@ -24,8 +28,8 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
   final List<String> _imagesBase64 = [];
   final List<Uint8List> _imagesBytes = [];
 
-  String? _audioBase64;
-  int? _audioDurationSeconds;
+  final List<AudioItem> _audios = [];
+  final List<DocumentItem> _documents = [];
 
   late int _selectedColor;
   bool _isSaving = false;
@@ -48,10 +52,9 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     _titleController = TextEditingController(text: widget.note?.title ?? '');
     _contentController = TextEditingController(text: widget.note?.content ?? '');
     _selectedColor = widget.note?.colorValue ?? 0xFFFFFFFF;
-    _audioBase64 = widget.note?.audioBase64;
-    _audioDurationSeconds = widget.note?.audioDurationSeconds;
 
-    if (widget.note != null && widget.note!.imagesBase64.isNotEmpty) {
+    if (widget.note != null) {
+      // Fotoğraflar
       for (final b64 in widget.note!.imagesBase64) {
         try {
           final bytes = base64Decode(b64);
@@ -59,6 +62,12 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
           _imagesBase64.add(b64);
         } catch (_) {}
       }
+
+      // Sesler
+      _audios.addAll(widget.note!.audios);
+
+      // Belgeler
+      _documents.addAll(widget.note!.documents);
     }
   }
 
@@ -69,6 +78,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     super.dispose();
   }
 
+  // --- SES İŞLEMLERİ ---
   Future<void> _recordVoiceNote() async {
     final result = await showDialog<VoiceRecordingResult>(
       context: context,
@@ -77,12 +87,125 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
 
     if (result != null) {
       setState(() {
-        _audioBase64 = result.audioBase64;
-        _audioDurationSeconds = result.durationSeconds;
+        _audios.add(
+          AudioItem(
+            id: 'audio_${DateTime.now().millisecondsSinceEpoch}',
+            name: 'Ses Kaydı ${_audios.length + 1}',
+            base64Data: result.audioBase64,
+            durationSeconds: result.durationSeconds,
+            isExternalFile: false,
+          ),
+        );
       });
     }
   }
 
+  Future<void> _pickExternalAudioFile() async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'wma', 'flac'],
+      );
+
+      if (files.isNotEmpty) {
+        for (final file in files) {
+          final bytes = await file.readAsBytes();
+          setState(() {
+            _audios.add(
+              AudioItem(
+                id: 'audio_${DateTime.now().millisecondsSinceEpoch}_${file.name}',
+                name: file.name,
+                base64Data: base64Encode(bytes),
+                durationSeconds: 0,
+                isExternalFile: true,
+              ),
+            );
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ses dosyası seçilirken hata: $e')),
+        );
+      }
+    }
+  }
+
+  void _showAudioOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16.0),
+          child: Wrap(
+            children: [
+              const ListTile(
+                title: Text('Ses Ekle', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.mic, color: Colors.deepPurple),
+                title: const Text('Mikrofonla Yeni Ses Kaydet'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _recordVoiceNote();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.music_note, color: Colors.blueAccent),
+                title: const Text('Cihazdan Ses / MP3 Dosyası Seç'),
+                subtitle: const Text('Müzik veya harici ses dosyaları'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickExternalAudioFile();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- BELGE İŞLEMLERİ ---
+  Future<void> _pickDocuments() async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv', 'pptx', 'ppt'],
+      );
+
+      if (files.isNotEmpty) {
+        for (final file in files) {
+          final bytes = await file.readAsBytes();
+          final size = (await file.length()) ?? bytes.length;
+          final ext = file.extension ?? (file.name.contains('.') ? file.name.split('.').last : 'file');
+          setState(() {
+            _documents.add(
+              DocumentItem(
+                id: 'doc_${DateTime.now().millisecondsSinceEpoch}_${file.name}',
+                name: file.name,
+                extension: ext.toLowerCase(),
+                sizeBytes: size,
+                base64Data: base64Encode(bytes),
+              ),
+            );
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Belge seçilirken hata: $e')),
+        );
+      }
+    }
+  }
+
+  // --- FOTOĞRAF İŞLEMLERİ ---
   Future<void> _pickMultipleImages() async {
     try {
       final List<XFile> pickedFiles = await _picker.pickMultiImage(
@@ -103,10 +226,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Fotoğraflar seçilirken hata oluştu: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
+          SnackBar(content: Text('Fotoğraf seçilirken hata: $e')),
         );
       }
     }
@@ -131,10 +251,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Kameradan fotoğraf çekilirken hata oluştu: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
+          SnackBar(content: Text('Kameradan fotoğraf çekilirken hata: $e')),
         );
       }
     }
@@ -146,53 +263,98 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16.0),
-            child: Wrap(
-              children: [
-                ListTile(
-                  title: Text(
-                    _imagesBytes.isEmpty ? 'Fotoğraf Ekle' : 'Daha Fazla Fotoğraf Ekle',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                  ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16.0),
+          child: Wrap(
+            children: [
+              ListTile(
+                title: Text(
+                  _imagesBytes.isEmpty ? 'Fotoğraf Ekle' : 'Daha Fazla Fotoğraf Ekle',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                 ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Colors.blueAccent),
+                title: const Text('Galeriden Seç (Çoklu Fotoğraf)'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickMultipleImages();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: Colors.deepOrangeAccent),
+                title: const Text('Kamerayla Yeni Çek'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickCameraImage();
+                },
+              ),
+              if (_imagesBytes.isNotEmpty)
                 ListTile(
-                  leading: const Icon(Icons.photo_library, color: Colors.blueAccent),
-                  title: const Text('Galeriden Seç (Çoklu Fotoğraf)'),
-                  subtitle: const Text('Birden fazla fotoğrafı aynı anda seçebilirsiniz'),
+                  leading: const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent),
+                  title: const Text('Tüm Fotoğrafları Kaldır', style: TextStyle(color: Colors.redAccent)),
                   onTap: () {
                     Navigator.pop(ctx);
-                    _pickMultipleImages();
+                    setState(() {
+                      _imagesBytes.clear();
+                      _imagesBase64.clear();
+                    });
                   },
                 ),
-                ListTile(
-                  leading: const Icon(Icons.camera_alt, color: Colors.deepOrangeAccent),
-                  title: const Text('Kamerayla Yeni Çek'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _pickCameraImage();
-                  },
-                ),
-                if (_imagesBytes.isNotEmpty)
-                  ListTile(
-                    leading: const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent),
-                    title: const Text('Tüm Fotoğrafları Kaldır', style: TextStyle(color: Colors.redAccent)),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      setState(() {
-                        _imagesBytes.clear();
-                        _imagesBase64.clear();
-                      });
-                    },
-                  ),
-              ],
-            ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
+  }
+
+  // --- MEDYA AKTARIMI (BAŞKA NOTA TAŞI / KOPYALA) ---
+  Future<void> _transferMedia({
+    required String mediaType,
+    required String mediaName,
+    required Function(Note targetNote) onAddToTarget,
+    required VoidCallback onRemoveFromCurrent,
+  }) async {
+    final result = await showDialog<MediaTransferResult>(
+      context: context,
+      builder: (_) => MediaTransferDialog(
+        currentNoteId: widget.note?.id,
+        mediaType: mediaType,
+        mediaName: mediaName,
+      ),
+    );
+
+    if (result != null) {
+      final allNotes = await NoteStorage.loadNotes();
+      final targetIndex = allNotes.indexWhere((n) => n.id == result.targetNoteId);
+
+      if (targetIndex != -1) {
+        final targetNote = allNotes[targetIndex];
+        onAddToTarget(targetNote);
+        targetNote.updatedAt = DateTime.now();
+        await NoteStorage.saveNotes(allNotes);
+
+        if (result.isMove) {
+          setState(() {
+            onRemoveFromCurrent();
+          });
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                result.isMove
+                    ? '$mediaName "${targetNote.title}" notuna taşındı.'
+                    : '$mediaName "${targetNote.title}" notuna kopyalandı.',
+              ),
+              backgroundColor: Colors.green.shade700,
+            ),
+          );
+        }
+      }
+    }
   }
 
   void _openFullScreenImage(int initialIndex) {
@@ -221,9 +383,32 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
                   Positioned(
                     top: 20,
                     right: 20,
-                    child: IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                      onPressed: () => Navigator.pop(ctx),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.drive_file_move_outlined, color: Colors.white, size: 26),
+                          tooltip: 'Başka Nota Kopyala / Taşı',
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            final b64 = _imagesBase64[currentIndex];
+                            final bytes = _imagesBytes[currentIndex];
+                            _transferMedia(
+                              mediaType: 'Fotoğraf',
+                              mediaName: 'Fotoğraf ${currentIndex + 1}',
+                              onAddToTarget: (target) => target.imagesBase64.add(b64),
+                              onRemoveFromCurrent: () {
+                                _imagesBase64.remove(b64);
+                                _imagesBytes.remove(bytes);
+                              },
+                            );
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
                     ),
                   ),
                   Positioned(
@@ -245,9 +430,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
                       left: 10,
                       child: IconButton(
                         icon: const Icon(Icons.chevron_left, color: Colors.white, size: 40),
-                        onPressed: () {
-                          setDialogState(() => currentIndex--);
-                        },
+                        onPressed: () => setDialogState(() => currentIndex--),
                       ),
                     ),
                   if (currentIndex < _imagesBytes.length - 1)
@@ -255,9 +438,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
                       right: 10,
                       child: IconButton(
                         icon: const Icon(Icons.chevron_right, color: Colors.white, size: 40),
-                        onPressed: () {
-                          setDialogState(() => currentIndex++);
-                        },
+                        onPressed: () => setDialogState(() => currentIndex++),
                       ),
                     ),
                 ],
@@ -273,7 +454,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     final title = _titleController.text.trim();
     final content = _contentController.text.trim();
 
-    if (title.isEmpty && content.isEmpty && _imagesBase64.isEmpty && _audioBase64 == null) {
+    if (title.isEmpty && content.isEmpty && _imagesBase64.isEmpty && _audios.isEmpty && _documents.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Boş not kaydedilemez!')),
       );
@@ -290,8 +471,8 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
       createdAt: widget.note?.createdAt ?? now,
       updatedAt: now,
       imagesBase64: _imagesBase64,
-      audioBase64: _audioBase64,
-      audioDurationSeconds: _audioDurationSeconds,
+      audios: _audios,
+      documents: _documents,
       colorValue: _selectedColor,
     );
 
@@ -321,12 +502,17 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.attach_file_rounded),
+            tooltip: 'Belge Ekle (PDF, Word, Excel...)',
+            onPressed: _pickDocuments,
+          ),
+          IconButton(
             icon: Icon(
-              _audioBase64 != null ? Icons.mic : Icons.mic_none_outlined,
-              color: _audioBase64 != null ? Colors.deepPurple : null,
+              _audios.isNotEmpty ? Icons.graphic_eq_rounded : Icons.mic_none_outlined,
+              color: _audios.isNotEmpty ? Colors.deepPurple : null,
             ),
-            tooltip: _audioBase64 != null ? 'Ses Kaydını Yenile' : 'Ses Kaydet',
-            onPressed: _recordVoiceNote,
+            tooltip: 'Ses Kaydı & Müzik Ekle',
+            onPressed: _showAudioOptions,
           ),
           IconButton(
             icon: const Icon(Icons.add_photo_alternate_outlined),
@@ -356,7 +542,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Çoklu Fotoğraf Şeridi (Varsa)
+                    // Çoklu Fotoğraf Şeridi
                     if (_imagesBytes.isNotEmpty) ...[
                       SizedBox(
                         height: 210,
@@ -427,23 +613,53 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
                                 Positioned(
                                   top: 8,
                                   right: 8,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.6),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: IconButton(
-                                      icon: const Icon(Icons.close, color: Colors.white, size: 18),
-                                      tooltip: 'Bu Fotoğrafı Sil',
-                                      padding: const EdgeInsets.all(4),
-                                      constraints: const BoxConstraints(),
-                                      onPressed: () {
-                                        setState(() {
-                                          _imagesBytes.removeAt(index);
-                                          _imagesBase64.removeAt(index);
-                                        });
-                                      },
-                                    ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withValues(alpha: 0.6),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: IconButton(
+                                          icon: const Icon(Icons.drive_file_move_outlined, color: Colors.white, size: 16),
+                                          tooltip: 'Başka Nota Aktar',
+                                          padding: const EdgeInsets.all(4),
+                                          constraints: const BoxConstraints(),
+                                          onPressed: () {
+                                            final b64 = _imagesBase64[index];
+                                            _transferMedia(
+                                              mediaType: 'Fotoğraf',
+                                              mediaName: 'Fotoğraf ${index + 1}',
+                                              onAddToTarget: (t) => t.imagesBase64.add(b64),
+                                              onRemoveFromCurrent: () {
+                                                _imagesBase64.removeAt(index);
+                                                _imagesBytes.removeAt(index);
+                                              },
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withValues(alpha: 0.6),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: IconButton(
+                                          icon: const Icon(Icons.close, color: Colors.white, size: 16),
+                                          tooltip: 'Bu Fotoğrafı Sil',
+                                          padding: const EdgeInsets.all(4),
+                                          constraints: const BoxConstraints(),
+                                          onPressed: () {
+                                            setState(() {
+                                              _imagesBytes.removeAt(index);
+                                              _imagesBase64.removeAt(index);
+                                            });
+                                          },
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -454,17 +670,38 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
                       const SizedBox(height: 16),
                     ],
 
-                    // Ses Kaydı Oynatıcı (Varsa)
-                    if (_audioBase64 != null) ...[
-                      VoicePlayerWidget(
-                        audioBase64: _audioBase64!,
-                        durationSeconds: _audioDurationSeconds,
-                        accentColor: Colors.deepPurple,
-                        onDelete: () {
-                          setState(() {
-                            _audioBase64 = null;
-                            _audioDurationSeconds = null;
-                          });
+                    // Çoklu Ses ve Müzik Çalma Listesi
+                    if (_audios.isNotEmpty) ...[
+                      AudioListWidget(
+                        audios: _audios,
+                        onDelete: (idx) => setState(() => _audios.removeAt(idx)),
+                        onRename: (idx, newName) => setState(() => _audios[idx].name = newName),
+                        onTransfer: (idx) {
+                          final item = _audios[idx];
+                          _transferMedia(
+                            mediaType: 'Ses Dosyası',
+                            mediaName: item.name,
+                            onAddToTarget: (t) => t.audios.add(item),
+                            onRemoveFromCurrent: () => _audios.removeAt(idx),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // Ekli Belgeler & Dosyalar
+                    if (_documents.isNotEmpty) ...[
+                      DocumentListWidget(
+                        documents: _documents,
+                        onDelete: (idx) => setState(() => _documents.removeAt(idx)),
+                        onTransfer: (idx) {
+                          final doc = _documents[idx];
+                          _transferMedia(
+                            mediaType: 'Belge',
+                            mediaName: doc.name,
+                            onAddToTarget: (t) => t.documents.add(doc),
+                            onRemoveFromCurrent: () => _documents.removeAt(idx),
+                          );
                         },
                       ),
                       const SizedBox(height: 16),
