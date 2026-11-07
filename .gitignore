@@ -46,3 +46,14 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+
+
+
+
+# Widget Preview related
+.widget_preview/
+
+# Local files
+.metadata
+.vscode/
