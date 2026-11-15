@@ -222,6 +222,7 @@ class Note {
   int orderIndex;
   LocationItem? location;
   List<ChangeLogEntry> changeLogs;
+  DateTime? reminderDateTime;
 
   Note({
     required this.id,
@@ -239,6 +240,7 @@ class Note {
     this.orderIndex = 0,
     this.location,
     List<ChangeLogEntry>? changeLogs,
+    this.reminderDateTime,
   })  : imagesBase64 = imagesBase64 ?? [],
         audios = audios ?? [],
         documents = documents ?? [],
@@ -251,6 +253,8 @@ class Note {
   bool get hasDocuments => documents.isNotEmpty;
   bool get hasVideos => videos.isNotEmpty;
   bool get hasLocation => location != null;
+  bool get hasReminder => reminderDateTime != null;
+  bool get isReminderExpired => reminderDateTime != null && reminderDateTime!.isBefore(DateTime.now());
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -271,6 +275,7 @@ class Note {
         'orderIndex': orderIndex,
         'location': location?.toMap(),
         'changeLogs': changeLogs.map((c) => c.toMap()).toList(),
+        'reminderDateTime': reminderDateTime?.toIso8601String(),
       };
 
   factory Note.fromMap(Map<String, dynamic> map) {
@@ -341,6 +346,7 @@ class Note {
       orderIndex: map['orderIndex'] ?? 0,
       location: location,
       changeLogs: changeLogs,
+      reminderDateTime: map['reminderDateTime'] != null ? DateTime.tryParse(map['reminderDateTime']) : null,
     );
   }
 

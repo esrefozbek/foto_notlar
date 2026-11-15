@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../models/note.dart';
+import '../services/alarm_service.dart';
 import '../services/note_storage.dart';
 import '../services/security_service.dart';
 import '../widgets/voice_recorder_dialog.dart';
@@ -160,6 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (confirm == true) {
+      await AlarmService.cancelAlarm(note.id);
       setState(() {
         _allNotes.removeWhere((n) => n.id == note.id);
         _applyFilter();
@@ -167,6 +169,42 @@ class _HomeScreenState extends State<HomeScreen> {
       await NoteStorage.saveNotes(_allNotes);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Not silindi.')));
+      }
+    }
+  }
+
+  // ── Dışarıdan Hızlı Alarm Kurma ──────────────────────────────────────────
+  Future<void> _quickSetAlarm(Note note) async {
+    final picked = await AlarmService.showAlarmPicker(
+      context,
+      currentReminder: note.reminderDateTime,
+    );
+
+    if (picked != null) {
+      if (picked.year == 1970) {
+        // Kaldır
+        await AlarmService.cancelAlarm(note.id);
+        setState(() => note.reminderDateTime = null);
+        await NoteStorage.saveNotes(_allNotes);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Hatırlatıcı alarmı kaldırıldı.')),
+          );
+        }
+      } else {
+        // Yeni alarm
+        setState(() => note.reminderDateTime = picked);
+        await AlarmService.scheduleAlarm(note);
+        await NoteStorage.saveNotes(_allNotes);
+        if (mounted) {
+          final formatted = DateFormat('d MMMM yyyy, HH:mm', 'tr_TR').format(picked);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Alarm kuruldu: $formatted ⏰'),
+              backgroundColor: Colors.amber.shade900,
+            ),
+          );
+        }
       }
     }
   }
@@ -711,6 +749,12 @@ class _HomeScreenState extends State<HomeScreen> {
         if (note.hasDocuments) _badge(Icons.attach_file_rounded, '${note.documents.length} Belge', Colors.blue),
         if (note.hasVideos) _badge(Icons.videocam_rounded, '${note.videos.length} Video', Colors.red),
         if (note.hasLocation) _badge(Icons.location_on_rounded, 'Konum', Colors.green),
+        if (note.hasReminder)
+          _badge(
+            Icons.alarm_rounded,
+            DateFormat('d MMM HH:mm', 'tr_TR').format(note.reminderDateTime!),
+            note.isReminderExpired ? Colors.grey : Colors.amber,
+          ),
       ],
     );
 
@@ -756,7 +800,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           Expanded(child: Text(note.title, maxLines: 1, overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor))),
                         ]),
-                        if (note.hasAudio || note.hasDocuments || note.hasVideos || note.hasLocation) ...[
+                        if (note.hasAudio || note.hasDocuments || note.hasVideos || note.hasLocation || note.hasReminder) ...[
                           const SizedBox(height: 4), buildBadges(),
                         ],
                         const SizedBox(height: 4),
@@ -817,7 +861,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           Expanded(child: Text(note.title, maxLines: 1, overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor))),
                         ]),
-                        if (note.hasAudio || note.hasDocuments || note.hasVideos || note.hasLocation) ...[
+                        if (note.hasAudio || note.hasDocuments || note.hasVideos || note.hasLocation || note.hasReminder) ...[
                           const SizedBox(height: 3), buildBadges(),
                         ],
                         const SizedBox(height: 4),
@@ -870,6 +914,21 @@ class _HomeScreenState extends State<HomeScreen> {
               leading: const Icon(Icons.edit_outlined, color: Colors.deepPurple),
               title: const Text('Düzenle'),
               onTap: () { Navigator.pop(ctx); _editNote(note); },
+            ),
+            ListTile(
+              leading: Icon(
+                note.hasReminder ? Icons.alarm_on_rounded : Icons.alarm_add_rounded,
+                color: Colors.amber.shade800,
+              ),
+              title: Text(
+                note.hasReminder
+                    ? 'Alarm: ${DateFormat('d MMM HH:mm', 'tr_TR').format(note.reminderDateTime!)} (Değiştir / Kaldır)'
+                    : 'Alarm / Hatırlatıcı Kur',
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _quickSetAlarm(note);
+              },
             ),
             ListTile(
               leading: Icon(note.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,

@@ -13,6 +13,7 @@ import '../widgets/voice_recorder_dialog.dart';
 import '../widgets/video_list_widget.dart';
 import '../widgets/word_color_picker_dialog.dart';
 import '../widgets/location_picker_widget.dart';
+import '../services/alarm_service.dart';
 
 class NoteEditScreen extends StatefulWidget {
   final Note? note;
@@ -37,6 +38,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
   late int _selectedColor;
   late String _selectedFont;
   LocationItem? _location;
+  DateTime? _reminderDateTime;
   bool _isSaving = false;
 
   // ── Değişiklik tespiti için orijinal değerler ──
@@ -49,6 +51,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
   late int _originalDocCount;
   late int _originalVideoCount;
   late bool _originalHasLocation;
+  DateTime? _originalReminder;
 
   bool get _hasChanges {
     if (_titleController.text.trim() != _originalTitle) return true;
@@ -60,6 +63,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     if (_documents.length != _originalDocCount) return true;
     if (_videos.length != _originalVideoCount) return true;
     if ((_location != null) != _originalHasLocation) return true;
+    if (_reminderDateTime != _originalReminder) return true;
     return false;
   }
 
@@ -95,6 +99,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     _selectedColor = widget.note?.colorValue ?? 0xFFFFFFFF;
     _selectedFont = widget.note?.fontFamily ?? 'default';
     _location = widget.note?.location;
+    _reminderDateTime = widget.note?.reminderDateTime;
 
     if (widget.note != null) {
       for (final b64 in widget.note!.imagesBase64) {
@@ -118,6 +123,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     _originalDocCount = _documents.length;
     _originalVideoCount = _videos.length;
     _originalHasLocation = _location != null;
+    _originalReminder = _reminderDateTime;
   }
 
   @override
@@ -147,6 +153,13 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     if (_videos.length < _originalVideoCount) changes.add('${_originalVideoCount - _videos.length} video silindi');
     if ((_location != null) != _originalHasLocation) {
       changes.add(_location != null ? 'Konum eklendi' : 'Konum kaldırıldı');
+    }
+    if (_reminderDateTime != _originalReminder) {
+      if (_reminderDateTime != null) {
+        changes.add('Alarm kuruldu (${DateFormat('d MMM HH:mm', 'tr_TR').format(_reminderDateTime!)})');
+      } else {
+        changes.add('Alarm kaldırıldı');
+      }
     }
 
     if (changes.isNotEmpty) {
@@ -656,9 +669,41 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
+  // ALARM & HATIRLATICI
+  // ──────────────────────────────────────────────────────────────────────────
+  Future<void> _pickAlarm() async {
+    final picked = await AlarmService.showAlarmPicker(
+      context,
+      currentReminder: _reminderDateTime,
+    );
+
+    if (picked != null) {
+      if (picked.year == 1970) {
+        setState(() => _reminderDateTime = null);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Hatırlatıcı alarmı kaldırıldı.')),
+          );
+        }
+      } else {
+        setState(() => _reminderDateTime = picked);
+        if (mounted) {
+          final formatted = DateFormat('d MMMM yyyy, HH:mm', 'tr_TR').format(picked);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Alarm kuruldu: $formatted ⏰'),
+              backgroundColor: Colors.amber.shade900,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
   // KAYDET — sadece değişiklik varsa updatedAt güncellenir
   // ──────────────────────────────────────────────────────────────────────────
-  void _saveNote() {
+  Future<void> _saveNote() async {
     final title = _titleController.text.trim();
     final content = _contentController.text.trim();
 
@@ -692,9 +737,19 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
       orderIndex: widget.note?.orderIndex ?? 0,
       location: _location,
       changeLogs: changed ? _buildChangeLogs() : (widget.note?.changeLogs ?? []),
+      reminderDateTime: _reminderDateTime,
     );
 
-    Navigator.pop(context, noteToSave);
+    // Alarmı ayarla veya iptal et
+    if (_reminderDateTime != null && _reminderDateTime!.isAfter(DateTime.now())) {
+      await AlarmService.scheduleAlarm(noteToSave);
+    } else if (_reminderDateTime == null && widget.note?.reminderDateTime != null) {
+      await AlarmService.cancelAlarm(noteToSave.id);
+    }
+
+    if (mounted) {
+      Navigator.pop(context, noteToSave);
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -783,6 +838,17 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
           style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
         ),
         actions: [
+          // Alarm / Hatırlatıcı
+          IconButton(
+            icon: Icon(
+              _reminderDateTime != null ? Icons.alarm_on_rounded : Icons.alarm_add_rounded,
+              color: _reminderDateTime != null ? Colors.amber.shade800 : null,
+            ),
+            tooltip: _reminderDateTime != null
+                ? 'Alarm: ${DateFormat('d MMM HH:mm', 'tr_TR').format(_reminderDateTime!)}'
+                : 'Alarm / Hatırlatıcı Kur',
+            onPressed: _pickAlarm,
+          ),
           // Konum
           IconButton(
             icon: Icon(
@@ -1008,6 +1074,12 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
                       const SizedBox(height: 16),
                     ],
 
+                    // ── Alarm / Hatırlatıcı Kartı ──
+                    if (_reminderDateTime != null) ...[
+                      _buildAlarmCard(),
+                      const SizedBox(height: 16),
+                    ],
+
                     // ── Tarih + Geçmiş ──
                     Row(
                       children: [
@@ -1170,6 +1242,92 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
           tooltip: 'Konumu Kaldır',
         ),
       ]),
+    );
+  }
+
+  // ── Alarm Kartı Widget ──
+  Widget _buildAlarmCard() {
+    final reminder = _reminderDateTime!;
+    final isExpired = reminder.isBefore(DateTime.now());
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isExpired
+            ? Colors.grey.withValues(alpha: 0.1)
+            : Colors.amber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isExpired
+              ? Colors.grey.withValues(alpha: 0.3)
+              : Colors.amber.shade700.withValues(alpha: 0.4),
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: isExpired ? Colors.grey.shade600 : Colors.amber.shade800,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.alarm_on_rounded, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      isExpired ? 'Alarm Süresi Doldu' : 'Alarm / Hatırlatıcı Kuruldu',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        color: isExpired ? Colors.grey.shade700 : Colors.amber.shade900,
+                      ),
+                    ),
+                    if (!isExpired) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade800,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text('AKTİF', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  DateFormat('d MMMM yyyy, EEEE - HH:mm', 'tr_TR').format(reminder),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: isExpired ? Colors.grey.shade600 : Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.edit_calendar_rounded, size: 20),
+            color: isExpired ? Colors.grey : Colors.amber.shade900,
+            tooltip: 'Alarmı Değiştir',
+            onPressed: _pickAlarm,
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18, color: Colors.redAccent),
+            tooltip: 'Alarmı Kaldır',
+            onPressed: () => setState(() => _reminderDateTime = null),
+          ),
+        ],
+      ),
     );
   }
 }
