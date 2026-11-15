@@ -13,6 +13,7 @@ import '../widgets/voice_recorder_dialog.dart';
 import '../widgets/video_list_widget.dart';
 import '../widgets/word_color_picker_dialog.dart';
 import '../widgets/location_picker_widget.dart';
+import '../services/ai_service.dart';
 import '../services/alarm_service.dart';
 
 class NoteEditScreen extends StatefulWidget {
@@ -40,6 +41,9 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
   LocationItem? _location;
   DateTime? _reminderDateTime;
   bool _isSaving = false;
+  String? _aiVisualSummary;
+  String? _aiAudioTranscript;
+  List<String> _aiKeywords = [];
 
   // ── Değişiklik tespiti için orijinal değerler ──
   late String _originalTitle;
@@ -111,6 +115,10 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
       _audios.addAll(widget.note!.audios);
       _documents.addAll(widget.note!.documents);
       _videos.addAll(widget.note!.videos);
+      // Mevcut AI verilerini yükle
+      _aiVisualSummary = widget.note!.aiVisualSummary;
+      _aiAudioTranscript = widget.note!.aiAudioTranscript;
+      _aiKeywords = List<String>.from(widget.note!.aiKeywords);
     }
 
     // Orijinal değerleri kaydet
@@ -700,6 +708,29 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     }
   }
 
+  // ── Arka Planda AI Analizi (Kaydetme sonrası notları günceller) ──────────
+  void _runAiAnalysisInBackground(Note note) {
+    // Not: Bu fonksiyon pop'tan sonra arka planda çalışır
+    AiService.analyzeNote(note).then((result) async {
+      note.aiVisualSummary = result.visualSummary;
+      note.aiAudioTranscript = result.audioTranscript;
+      note.aiKeywords = result.keywords;
+
+      // Güncel notları diskten oku ve bu notu güncelle
+      final allNotes = await NoteStorage.loadNotes();
+      final idx = allNotes.indexWhere((n) => n.id == note.id);
+      if (idx != -1) {
+        allNotes[idx].aiVisualSummary = result.visualSummary;
+        allNotes[idx].aiAudioTranscript = result.audioTranscript;
+        allNotes[idx].aiKeywords = result.keywords;
+        await NoteStorage.saveNotes(allNotes);
+        debugPrint('✅ AI analizi tamamlandı: ${note.title} → ${result.keywords.take(5)}');
+      }
+    }).catchError((e) {
+      debugPrint('⚠️ AI analizi hatası: $e');
+    });
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // KAYDET — sadece değişiklik varsa updatedAt güncellenir
   // ──────────────────────────────────────────────────────────────────────────
@@ -738,7 +769,15 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
       location: _location,
       changeLogs: changed ? _buildChangeLogs() : (widget.note?.changeLogs ?? []),
       reminderDateTime: _reminderDateTime,
+      aiVisualSummary: _aiVisualSummary,
+      aiAudioTranscript: _aiAudioTranscript,
+      aiKeywords: _aiKeywords,
     );
+
+    // Eğer medya değişmişse arka planda AI analizi başlat
+    if (changed && (noteToSave.hasImages || noteToSave.hasAudio || noteToSave.hasVideos)) {
+      _runAiAnalysisInBackground(noteToSave);
+    }
 
     // Alarmı ayarla veya iptal et
     if (_reminderDateTime != null && _reminderDateTime!.isAfter(DateTime.now())) {

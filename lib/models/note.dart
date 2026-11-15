@@ -223,6 +223,9 @@ class Note {
   LocationItem? location;
   List<ChangeLogEntry> changeLogs;
   DateTime? reminderDateTime;
+  String? aiVisualSummary;
+  String? aiAudioTranscript;
+  List<String> aiKeywords;
 
   Note({
     required this.id,
@@ -241,11 +244,15 @@ class Note {
     this.location,
     List<ChangeLogEntry>? changeLogs,
     this.reminderDateTime,
+    this.aiVisualSummary,
+    this.aiAudioTranscript,
+    List<String>? aiKeywords,
   })  : imagesBase64 = imagesBase64 ?? [],
         audios = audios ?? [],
         documents = documents ?? [],
         videos = videos ?? [],
-        changeLogs = changeLogs ?? [];
+        changeLogs = changeLogs ?? [],
+        aiKeywords = aiKeywords ?? [];
 
   bool get hasImages => imagesBase64.isNotEmpty;
   String? get firstImage => imagesBase64.isNotEmpty ? imagesBase64.first : null;
@@ -255,6 +262,10 @@ class Note {
   bool get hasLocation => location != null;
   bool get hasReminder => reminderDateTime != null;
   bool get isReminderExpired => reminderDateTime != null && reminderDateTime!.isBefore(DateTime.now());
+  bool get hasAiIndex => (aiVisualSummary != null && aiVisualSummary!.isNotEmpty) ||
+      (aiAudioTranscript != null && aiAudioTranscript!.isNotEmpty) ||
+      aiKeywords.isNotEmpty;
+  String get searchableAiText => '${aiVisualSummary ?? ''} ${aiAudioTranscript ?? ''} ${aiKeywords.join(' ')}'.toLowerCase();
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -276,6 +287,9 @@ class Note {
         'location': location?.toMap(),
         'changeLogs': changeLogs.map((c) => c.toMap()).toList(),
         'reminderDateTime': reminderDateTime?.toIso8601String(),
+        'aiVisualSummary': aiVisualSummary,
+        'aiAudioTranscript': aiAudioTranscript,
+        'aiKeywords': aiKeywords,
       };
 
   factory Note.fromMap(Map<String, dynamic> map) {
@@ -347,6 +361,9 @@ class Note {
       location: location,
       changeLogs: changeLogs,
       reminderDateTime: map['reminderDateTime'] != null ? DateTime.tryParse(map['reminderDateTime']) : null,
+      aiVisualSummary: map['aiVisualSummary'] as String?,
+      aiAudioTranscript: map['aiAudioTranscript'] as String?,
+      aiKeywords: map['aiKeywords'] != null ? List<String>.from(map['aiKeywords']) : [],
     );
   }
 

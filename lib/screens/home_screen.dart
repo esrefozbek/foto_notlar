@@ -8,6 +8,7 @@ import '../models/note.dart';
 import '../services/alarm_service.dart';
 import '../services/note_storage.dart';
 import '../services/security_service.dart';
+import '../widgets/ai_settings_dialog.dart';
 import '../widgets/voice_recorder_dialog.dart';
 import 'lock_screen.dart';
 import 'note_edit_screen.dart';
@@ -72,7 +73,8 @@ class _HomeScreenState extends State<HomeScreen> {
             note.documents.any((d) => d.name.toLowerCase().contains(q)) ||
             note.audios.any((a) => a.name.toLowerCase().contains(q)) ||
             note.videos.any((v) => v.name.toLowerCase().contains(q)) ||
-            (note.location?.displayName.toLowerCase().contains(q) ?? false);
+            (note.location?.displayName.toLowerCase().contains(q) ?? false) ||
+            note.searchableAiText.contains(q);
       }).toList();
     }
   }
@@ -528,6 +530,20 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Notlarım', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
+          // Yapay Zeka Arama & İndeks Ayarları
+          IconButton(
+            icon: const Icon(Icons.auto_awesome_rounded, color: Colors.amber),
+            tooltip: 'Yapay Zeka (AI) Arama & İndeks',
+            onPressed: () async {
+              final updated = await showDialog<bool>(
+                context: context,
+                builder: (context) => const AiSettingsDialog(),
+              );
+              if (updated == true) {
+                _loadNotes();
+              }
+            },
+          ),
           // Sırala modu
           IconButton(
             icon: Icon(_isReorderMode ? Icons.check_circle_rounded : Icons.swap_vert_rounded,
@@ -557,7 +573,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Notlarda ara...',
+                hintText: 'Metin, foto veya seste ara (AI destekli)...',
                 prefixIcon: const Icon(Icons.search_rounded),
                 suffixIcon: _searchQuery.isNotEmpty
                     ? IconButton(icon: const Icon(Icons.clear), onPressed: () { _searchController.clear(); setState(() { _searchQuery = ''; _applyFilter(); }); })
@@ -740,7 +756,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final textColor = isDark ? Colors.white : Colors.black87;
     final secondaryTextColor = isDark ? Colors.white70 : Colors.black54;
 
-    // Medya rozetleri
+    // Medya ve AI rozetleri
     Widget buildBadges() => Wrap(
       spacing: 4,
       runSpacing: 2,
@@ -755,6 +771,8 @@ class _HomeScreenState extends State<HomeScreen> {
             DateFormat('d MMM HH:mm', 'tr_TR').format(note.reminderDateTime!),
             note.isReminderExpired ? Colors.grey : Colors.amber,
           ),
+        if (note.hasAiIndex)
+          _badge(Icons.auto_awesome_rounded, 'AI', Colors.teal),
       ],
     );
 
@@ -800,7 +818,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           Expanded(child: Text(note.title, maxLines: 1, overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor))),
                         ]),
-                        if (note.hasAudio || note.hasDocuments || note.hasVideos || note.hasLocation || note.hasReminder) ...[
+                        if (note.hasAudio || note.hasDocuments || note.hasVideos || note.hasLocation || note.hasReminder || note.hasAiIndex) ...[
                           const SizedBox(height: 4), buildBadges(),
                         ],
                         const SizedBox(height: 4),
@@ -861,7 +879,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           Expanded(child: Text(note.title, maxLines: 1, overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor))),
                         ]),
-                        if (note.hasAudio || note.hasDocuments || note.hasVideos || note.hasLocation || note.hasReminder) ...[
+                        if (note.hasAudio || note.hasDocuments || note.hasVideos || note.hasLocation || note.hasReminder || note.hasAiIndex) ...[
                           const SizedBox(height: 3), buildBadges(),
                         ],
                         const SizedBox(height: 4),
