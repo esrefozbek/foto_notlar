@@ -462,13 +462,23 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     onAddToTarget(targetNote);
     targetNote.updatedAt = DateTime.now();
 
-    // Kaydet
-    await NoteStorage.saveNotes(allNotes);
-
-    // TAŞIMA ise mevcut notta sil (kopyalamada silme!)
+    // TAŞIMA ise mevcut nottan da sil
     if (result.isMove) {
       setState(onRemoveFromCurrent);
+      if (widget.note != null) {
+        final currentIndex = allNotes.indexWhere((n) => n.id == widget.note!.id);
+        if (currentIndex != -1) {
+          allNotes[currentIndex].imagesBase64 = List.from(_imagesBase64);
+          allNotes[currentIndex].audios = List.from(_audios);
+          allNotes[currentIndex].documents = List.from(_documents);
+          allNotes[currentIndex].videos = List.from(_videos);
+          allNotes[currentIndex].updatedAt = DateTime.now();
+        }
+      }
     }
+
+    // Hedef ve mevcut notu storage'a kaydet
+    await NoteStorage.saveNotes(allNotes);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

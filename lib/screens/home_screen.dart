@@ -81,19 +81,21 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       MaterialPageRoute(builder: (context) => const NoteEditScreen()),
     );
+    final freshNotes = await NoteStorage.loadNotes();
     if (newNote != null) {
       newNote.orderIndex = 0;
-      // Mevcut sıralamaları kaydır
-      for (final n in _allNotes) {
+      for (final n in freshNotes) {
         n.orderIndex++;
       }
-      setState(() {
-        _allNotes.insert(0, newNote);
-        _sortNotes(_allNotes);
-        _applyFilter();
-      });
-      await NoteStorage.saveNotes(_allNotes);
+      freshNotes.insert(0, newNote);
+      _sortNotes(freshNotes);
+      await NoteStorage.saveNotes(freshNotes);
     }
+    setState(() {
+      _allNotes = freshNotes;
+      _sortNotes(_allNotes);
+      _applyFilter();
+    });
   }
 
   Future<void> _editNote(Note note) async {
@@ -102,23 +104,27 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (context) => NoteEditScreen(note: note)),
     );
 
+    // Her halükarda en güncel notları diskten yükle (medya transferi başka notları güncellemiş olabilir!)
+    final freshNotes = await NoteStorage.loadNotes();
     if (updatedNote != null) {
-      final index = _allNotes.indexWhere((n) => n.id == updatedNote.id);
+      final index = freshNotes.indexWhere((n) => n.id == updatedNote.id);
       if (index != -1) {
         // orderIndex ve isPinned'i koru
-        updatedNote.orderIndex = _allNotes[index].orderIndex;
-        updatedNote.isPinned = _allNotes[index].isPinned;
-        setState(() {
-          _allNotes[index] = updatedNote;
-          _sortNotes(_allNotes);
-          _applyFilter();
-        });
-        await NoteStorage.saveNotes(_allNotes);
+        updatedNote.orderIndex = freshNotes[index].orderIndex;
+        updatedNote.isPinned = freshNotes[index].isPinned;
+        freshNotes[index] = updatedNote;
+      } else {
+        freshNotes.insert(0, updatedNote);
       }
-    } else {
-      // Medya aktarımı yapılmış olabilir
-      _loadNotes();
+      _sortNotes(freshNotes);
+      await NoteStorage.saveNotes(freshNotes);
     }
+
+    setState(() {
+      _allNotes = freshNotes;
+      _sortNotes(_allNotes);
+      _applyFilter();
+    });
   }
 
   Future<void> _togglePin(Note note) async {
