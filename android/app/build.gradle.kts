@@ -6,12 +6,13 @@ plugins {
 
 android {
     namespace = "com.petrus.fotonot.foto_notlar"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37 // DEĞİŞTİ (eskisi: flutter.compileSdkVersion)
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true // EKLENDİ
     }
 
     defaultConfig {
@@ -46,4 +47,9 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+// EKLENDİ (dosyanın en altına)
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }

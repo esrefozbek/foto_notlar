@@ -125,17 +125,55 @@ class AiService {
       });
     }
 
-    // 3. Varsa ses kaydını ekle (Konuşmayı metne dökme için ilk ses kaydı)
-    if (note.audios.isNotEmpty && note.audios.first.base64Data.isNotEmpty) {
-      parts.add({
-        'inline_data': {
-          'mime_type': 'audio/mp3',
-          'data': note.audios.first.base64Data,
-        }
-      });
+    // 3. Ses kayıtlarını ekle (maksimum 2 adet — kota tasarrufu)
+    for (int i = 0; i < note.audios.length && i < 2; i++) {
+      final audio = note.audios[i];
+      if (audio.base64Data.isNotEmpty) {
+        // Dosya adından mime_type tespiti (örn: kayit.m4a → audio/m4a)
+        final ext = audio.name.contains('.')
+            ? audio.name.split('.').last.toLowerCase()
+            : '';
+        final mimeType = switch (ext) {
+          'mp3'  => 'audio/mp3',
+          'ogg'  => 'audio/ogg',
+          'wav'  => 'audio/wav',
+          'flac' => 'audio/flac',
+          'aac'  => 'audio/aac',
+          _      => 'audio/m4a', // Android varsayılan kayıt formatı
+        };
+        parts.add({
+          'inline_data': {
+            'mime_type': mimeType,
+            'data': audio.base64Data,
+          }
+        });
+      }
     }
 
-    // 4. Gemini 2.5 Flash API Çağrısı
+    // 4. Video içeriklerini ekle (maksimum 2 adet — kota tasarrufu)
+    for (int i = 0; i < note.videos.length && i < 2; i++) {
+      final video = note.videos[i];
+      if (video.base64Data.isNotEmpty) {
+        final ext = video.name.contains('.')
+            ? video.name.split('.').last.toLowerCase()
+            : '';
+        final mimeType = switch (ext) {
+          'mov'  => 'video/quicktime',
+          'avi'  => 'video/x-msvideo',
+          'mkv'  => 'video/x-matroska',
+          'webm' => 'video/webm',
+          _      => 'video/mp4', // Android varsayılan video formatı
+        };
+        parts.add({
+          'inline_data': {
+            'mime_type': mimeType,
+            'data': video.base64Data,
+          }
+        });
+      }
+    }
+
+    // 5. Gemini 2.5 Flash API Çağrısı
     final url = Uri.parse(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey',
     );

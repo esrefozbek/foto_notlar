@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../models/note.dart';
 import '../services/alarm_service.dart';
+import '../services/backup_service.dart';
 import '../services/note_storage.dart';
 import '../services/security_service.dart';
 import '../widgets/ai_settings_dialog.dart';
@@ -507,6 +508,104 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // YEDEKLEME / GERİ YÜKLEME
+  // ──────────────────────────────────────────────────────────────────────────
+
+  Future<void> _exportBackup() async {
+    if (_allNotes.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Dışa aktarılacak not yok.')),
+        );
+      }
+      return;
+    }
+
+    // İlerleme göster
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(children: [
+            SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+            SizedBox(width: 12),
+            Text('Yedek hazırlanıyor...'),
+          ]),
+          duration: Duration(seconds: 30),
+        ),
+      );
+    }
+
+    final result = await BackupService.exportNotes(_allNotes);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: result.success ? Colors.green.shade700 : Colors.red.shade700,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  Future<void> _importBackup() async {
+    // Uyarı diyaloğu
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(children: [
+          Icon(Icons.download_rounded, color: Colors.blue),
+          SizedBox(width: 8),
+          Text('Yedeği Geri Yükle'),
+        ]),
+        content: const Text(
+          'Seçtiğiniz JSON yedek dosyasındaki notlar mevcut notlarınızla birleştirilecek.\n\n'
+          'Aynı ID\'li notlarda daha yeni sürüm korunur. Mevcut notlarınız silinmez.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Vazgeç')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Dosya Seç'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(children: [
+            SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+            SizedBox(width: 12),
+            Text('İçe aktarılıyor...'),
+          ]),
+          duration: Duration(seconds: 60),
+        ),
+      );
+    }
+
+    final result = await BackupService.importNotes();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: result.success ? Colors.blue.shade700 : Colors.red.shade700,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      if (result.success) {
+        _loadNotes(); // Listeyi tazele
+      }
+    }
+  }
+
   void _lockApp() {
     Navigator.pushReplacement(
       context,
@@ -562,6 +661,35 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.shield_outlined),
             tooltip: 'Güvenlik Ayarları',
             onPressed: _showSecuritySettings,
+          ),
+          // Yedekleme Menüsü
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded),
+            tooltip: 'Daha Fazla',
+            onSelected: (value) {
+              if (value == 'export') _exportBackup();
+              if (value == 'import') _importBackup();
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'export',
+                child: ListTile(
+                  leading: Icon(Icons.upload_rounded, color: Colors.green),
+                  title: Text('Notları Dışa Aktar'),
+                  subtitle: Text('JSON yedeği oluştur'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'import',
+                child: ListTile(
+                  leading: Icon(Icons.download_rounded, color: Colors.blue),
+                  title: Text('Notları İçe Aktar'),
+                  subtitle: Text('JSON yedeğini geri yükle'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
         ],
       ),
